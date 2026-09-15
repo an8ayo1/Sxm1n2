@@ -1,6 +1,6 @@
 import math
 import unittest
-from racer.core import Race, Control, DT, TIME_LIMIT
+from racer.core import Race, Control, DT, TIME_LIMIT, CAR_HALF_WIDTH, CAR_HALF_LENGTH
 
 
 class RaceTests(unittest.TestCase):
@@ -43,14 +43,15 @@ class RaceTests(unittest.TestCase):
     def test_barrier_and_obstacle_collision(self):
         r=self.race()
         c=r.player
-        c.x,c.y,c.heading=r.track.at(20,9.4)
+        c.x,c.y,c.heading=r.track.at(20,r.track.width/2-.2)
         c.vx=-math.sin(c.heading)*20
         c.vy=math.cos(c.heading)*20
         r._drive(c,Control(),DT)
         self.assertLess(c.health,100)
-        self.assertLess(abs(r.track.project(c.x,c.y)[1]),8.5)
+        self.assertLess(abs(r.track.project(c.x,c.y)[1]),r.track.width/2-CAR_HALF_WIDTH+.02)
         c.hit_cooldown=0
         c.x,c.y,c.vx,c.vy=1,0,-15,0
+        c.heading=math.pi/2
         before=c.health
         r._solid_collision(c,0,0,1.5)
         self.assertGreaterEqual(c.x,2.65)
@@ -62,8 +63,9 @@ class RaceTests(unittest.TestCase):
         a,b=r.cars[:2]
         a.x,a.y,b.x,b.y=0,0,2,0
         a.vx,b.vx=20,0
+        a.heading=b.heading=math.pi/2
         r._car_collisions()
-        self.assertAlmostEqual(math.hypot(a.x-b.x,a.y-b.y),2.5)
+        self.assertAlmostEqual(math.hypot(a.x-b.x,a.y-b.y),2*CAR_HALF_WIDTH,places=3)
         self.assertGreater(b.vx,0)
         self.assertLess(a.vx,20)
 
@@ -110,6 +112,72 @@ class RaceTests(unittest.TestCase):
         r.elapsed=TIME_LIMIT
         r.step(Control())
         self.assertEqual(r.state,'gameover')
+
+    def test_wrong_way_delay_and_immediate_clear(self):
+        r=self.race()
+        c=r.player
+        c.x,c.y,tangent=r.track.at(50)
+        c.track_s=50
+        c.heading=tangent+math.pi
+        c.vx,c.vy=-math.cos(tangent)*6,-math.sin(tangent)*6
+        for _ in range(110):
+            r._drive(c,Control(throttle=.4),DT)
+        self.assertFalse(c.wrong_way)  # Brief turns must not warn.
+        for _ in range(20):
+            r._drive(c,Control(throttle=.4),DT)
+        self.assertTrue(c.wrong_way)
+        c.heading=r.track.project(c.x,c.y)[2]
+        r._drive(c,Control(),DT)
+        self.assertFalse(c.wrong_way)
+        c.heading+=math.pi
+        c.vx=c.vy=0
+        for _ in range(150):
+            r._drive(c,Control(),DT)
+        self.assertFalse(c.wrong_way)  # Stopped facing backward is not reverse travel.
+
+    def test_respawn_uses_nearest_road_and_clears_motion(self):
+        r=self.race()
+        c=r.player
+        c.x,c.y,c.heading=r.track.at(210,18)
+        c.heading+=math.pi
+        c.track_s=0  # Deliberately stale cache, such as after an off-road displacement.
+        c.progress=25
+        expected_s=r.track.project(c.x,c.y)[0]
+        expected=r.track.at(expected_s)
+        c.vx,c.vy,c.steer,c.wrong_way_time,c.pad_boost=12,9,1,2,1.4
+        c.boosted=True
+        gates=c.next_gate
+        self.assertTrue(r.recover())
+        for actual,target in zip((c.x,c.y,c.heading),expected):
+            self.assertAlmostEqual(actual,target)
+        self.assertEqual(c.speed,0)
+        self.assertEqual(c.steer,0)
+        self.assertEqual(c.pad_boost,0)
+        self.assertFalse(c.boosted or c.wrong_way)
+        self.assertEqual((c.progress,c.next_gate),(25,gates))
+        r.pause()
+        self.assertTrue(r.recover())
+        self.assertEqual(r.state,'paused')
+        r.reset('menu')
+        self.assertFalse(r.recover())
+
+    def test_centered_box_catches_bumpers_and_mirrors_sides(self):
+        r=self.race()
+        c=r.player
+        c.heading=0
+        c.x=c.y=0
+        c.vx=10
+        r._solid_collision(c,CAR_HALF_LENGTH+.8,0,1)
+        self.assertLess(c.x,0)  # Front bumper, previously missed by center-only circles.
+        self.assertLess(c.vx,0)
+        positions=[]
+        for sign in (-1,1):
+            c.x=c.y=0
+            c.vx=0
+            c.vy=sign*10
+            r._solid_collision(c,0,sign*(CAR_HALF_WIDTH+.8),1)
+            positions.append(c.y)
+        self.assertAlmostEqual(positions[0],-positions[1])
 
     def test_complete_three_laps_with_real_controls(self):
         r=self.race()

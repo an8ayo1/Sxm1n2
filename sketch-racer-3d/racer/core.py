@@ -11,6 +11,9 @@ TAU = math.tau
 DT = 1 / 120
 LAPS = 3
 TIME_LIMIT = 240.0
+# Centered footprint: matches the body, wheels and bumpers in visuals.py.
+CAR_HALF_WIDTH = 1.34
+CAR_HALF_LENGTH = 2.36
 
 
 def clamp(x, a, b):
@@ -31,7 +34,7 @@ class Control:
 
 
 class Track:
-    width = 19.0
+    width = 23.0
 
     def __init__(self):
         self.points = []
@@ -101,6 +104,11 @@ class Car:
     steer: float = 0
     lane: float = 0
     target_speed: float = 30
+    wrong_way_time: float = 0
+
+    @property
+    def wrong_way(self):
+        return self.wrong_way_time >= 1.0
 
     @property
     def speed(self):
@@ -154,14 +162,30 @@ class Race:
             self.state = self.resume_state
 
     def recover(self):
-        if self.state != 'racing':
-            return
+        if self.state not in ('racing', 'paused') or self.player.health <= 0:
+            return False
         c = self.player
+        # Reproject the CURRENT position; cached progress can be stale off-road.
+        # Keep earned progress/gates intact so recovery cannot skip checkpoints.
+        c.track_s = self.track.project(c.x, c.y)[0]
         c.x, c.y, c.heading = self.track.at(c.track_s)
         c.vx = c.vy = 0
+        c.steer = c.wrong_way_time = c.pad_boost = 0
+        c.boosted = False
+        c.hit_cooldown = .4  # Brief contact grace without triggering impact camera shake.
         c.score = max(0, c.score-100)
         c.health = max(1, c.health-4)
         self.events.append('RECOVERED  -100')
+        return True
+
+    def _update_wrong_way(self, c, tangent, dt):
+        # Require sustained reverse travel, not a brief turn or a stationary car.
+        alignment = math.cos(c.heading-tangent)
+        along_road = c.vx*math.cos(tangent)+c.vy*math.sin(tangent)
+        if alignment < -.3 and along_road < -2:
+            c.wrong_way_time += dt
+        else:
+            c.wrong_way_time = 0
 
     def standings(self):
         return sorted(self.cars, key=lambda c: (
@@ -239,7 +263,12 @@ class Race:
         c.x += c.vx*dt
         c.y += c.vy*dt
         s, offset, tangent, px, py = self.track.project(c.x, c.y)
-        border = self.track.width/2-1.2
+        self._update_wrong_way(c, tangent, dt)
+        # Project the oriented box onto the road normal, including bumper length.
+        relative_heading = c.heading-tangent
+        extent = (CAR_HALF_WIDTH*abs(math.cos(relative_heading))+
+                  CAR_HALF_LENGTH*abs(math.sin(relative_heading)))
+        border = self.track.width/2-extent
         if abs(offset) > border:
             sign = 1 if offset > 0 else -1
             nx, ny = -math.sin(tangent)*sign, math.cos(tangent)*sign
@@ -247,11 +276,13 @@ class Race:
             c.y -= ny*(abs(offset)-border)
             outward = c.vx*nx+c.vy*ny
             if outward > 0:
-                c.vx -= 1.35*outward*nx
-                c.vy -= 1.35*outward*ny
-                self._impact(c, outward)
-            c.vx *= .985
-            c.vy *= .985
+                # Low restitution lets the car slide along a wall, not ping-pong.
+                c.vx -= 1.08*outward*nx
+                c.vy -= 1.08*outward*ny
+                if outward > 2:
+                    self._impact(c, outward)
+            c.vx *= math.exp(-.7*dt)
+            c.vy *= math.exp(-.7*dt)
         for ox, oy, radius, kind, _, _ in self.obstacles:
             self._solid_collision(c, ox, oy, radius)
         for x, y, h, _ in self.pads:
@@ -282,39 +313,78 @@ class Race:
                     c.score += 1500+int(c.health*10)
         c.score += max(0, ds)*.8
 
+    @staticmethod
+    def _box_axes(c):
+        return ((math.cos(c.heading), math.sin(c.heading)),
+                (-math.sin(c.heading), math.cos(c.heading)))
+
     def _solid_collision(self, c, x, y, radius):
-        dx, dy = c.x-x, c.y-y
-        distance = math.hypot(dx, dy)
-        minimum = radius+1.15
-        if distance < minimum:
-            nx, ny = (dx/distance, dy/distance) if distance > .0001 else (1, 0)
-            c.x, c.y = x+nx*minimum, y+ny*minimum
-            inward = c.vx*nx+c.vy*ny
-            if inward < 0:
-                self._impact(c, -inward)
-                c.vx -= 1.4*inward*nx
-                c.vy -= 1.4*inward*ny
+        # Closest point on the car's centered oriented rectangle vs obstacle circle.
+        forward, side = self._box_axes(c)
+        dx, dy = x-c.x, y-c.y
+        local = (dx*forward[0]+dy*forward[1], dx*side[0]+dy*side[1])
+        half = (CAR_HALF_LENGTH, CAR_HALF_WIDTH)
+        nearest = [clamp(local[i], -half[i], half[i]) for i in range(2)]
+        delta = (nearest[0]-local[0], nearest[1]-local[1])
+        distance = math.hypot(*delta)
+        if distance >= radius:
+            return
+        if distance > 1e-6:
+            normal = (delta[0]/distance, delta[1]/distance)
+            depth = radius-distance
+        else:
+            axis = min(range(2), key=lambda i: half[i]-abs(local[i]))
+            normal = [0., 0.]
+            normal[axis] = -1 if local[axis] >= 0 else 1
+            depth = radius+half[axis]-abs(local[axis])
+        nx = normal[0]*forward[0]+normal[1]*side[0]
+        ny = normal[0]*forward[1]+normal[1]*side[1]
+        c.x += nx*(depth+1e-4)
+        c.y += ny*(depth+1e-4)
+        inward = c.vx*nx+c.vy*ny
+        if inward < 0:
+            self._impact(c, -inward)
+            c.vx -= 1.18*inward*nx
+            c.vy -= 1.18*inward*ny
 
     def _car_collisions(self):
+        # Separating-axis test: all four axes of the two centered car boxes.
         for i, a in enumerate(self.cars):
             for b in self.cars[i+1:]:
                 if a.finished or b.finished:
                     continue
                 dx, dy = a.x-b.x, a.y-b.y
-                distance = math.hypot(dx, dy)
-                if distance < 2.5:
-                    nx, ny = (dx/distance, dy/distance) if distance > .0001 else (1, 0)
-                    push = (2.5-distance)/2
-                    a.x += nx*push
-                    a.y += ny*push
-                    b.x -= nx*push
-                    b.y -= ny*push
-                    relative = (a.vx-b.vx)*nx+(a.vy-b.vy)*ny
-                    if relative < 0:
-                        impulse = -.65*relative
-                        a.vx += impulse*nx
-                        a.vy += impulse*ny
-                        b.vx -= impulse*nx
-                        b.vy -= impulse*ny
-                        self._impact(a, -relative)
-                        self._impact(b, -relative)
+                if dx*dx+dy*dy > (2*math.hypot(CAR_HALF_LENGTH, CAR_HALF_WIDTH))**2:
+                    continue
+                axes_a, axes_b = self._box_axes(a), self._box_axes(b)
+                depth, normal = float('inf'), None
+                for nx, ny in axes_a+axes_b:
+                    def support(axes):
+                        return (CAR_HALF_LENGTH*abs(nx*axes[0][0]+ny*axes[0][1])+
+                                CAR_HALF_WIDTH*abs(nx*axes[1][0]+ny*axes[1][1]))
+                    separation = dx*nx+dy*ny
+                    overlap = support(axes_a)+support(axes_b)-abs(separation)
+                    if overlap <= 0:
+                        normal = None
+                        break
+                    if overlap < depth:
+                        depth = overlap
+                        sign = 1 if separation >= 0 else -1
+                        normal = (nx*sign, ny*sign)
+                if normal is None:
+                    continue
+                nx, ny = normal
+                push = (depth+1e-4)/2
+                a.x += nx*push
+                a.y += ny*push
+                b.x -= nx*push
+                b.y -= ny*push
+                relative = (a.vx-b.vx)*nx+(a.vy-b.vy)*ny
+                if relative < 0:
+                    impulse = -.55*relative
+                    a.vx += impulse*nx
+                    a.vy += impulse*ny
+                    b.vx -= impulse*nx
+                    b.vy -= impulse*ny
+                    self._impact(a, -relative)
+                    self._impact(b, -relative)
