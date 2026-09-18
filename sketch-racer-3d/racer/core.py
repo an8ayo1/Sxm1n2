@@ -148,7 +148,7 @@ class Race:
         self.events = []
         self.cars = []
         for i, (name, color) in enumerate([
-            ('YOU', (1, .37, .12, 1)), ('NOVA', (.14, .85, .96, 1)),
+            ('YOU', (.08, .38, .82, 1)), ('NOVA', (.14, .85, .96, 1)),
             ('GHOST', (.8, .73, 1, 1)), ('EMBER', (1, .75, .18, 1)),
             ('JADE', (.26, .95, .58, 1))]):
             s = -i*6

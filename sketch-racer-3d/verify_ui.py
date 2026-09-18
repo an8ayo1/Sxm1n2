@@ -27,6 +27,9 @@ def main():
 
     # Every visual wheel has a centered tire and an exactly mirrored opposite wheel.
     root,wheels,_=game.car_nodes[0]
+    assert root.getName()=='player-blue-turbo'
+    assert all(node.getName()=='sketch-pickup' for node,_,_ in game.car_nodes[1:])
+    assert game.race.player.color[2]>game.race.player.color[0]
     for left,right in zip(wheels[:2],wheels[2:]):
         lo,hi=left.getTightBounds(root)
         rlo,rhi=right.getTightBounds(root)

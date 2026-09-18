@@ -9,15 +9,15 @@ from direct.gui.DirectGui import DirectFrame, DirectButton, DirectWaitBar
 from direct.gui.OnscreenText import OnscreenText
 
 from .core import Race, Control, DT, LAPS, TIME_LIMIT
-from .visuals import build_world, build_car, lines
+from .visuals import build_world, build_car, build_player_car, lines
 from .audio import Audio
 
 ROOT = Path(__file__).resolve().parent.parent
-ORANGE=(.94,.34,.12,1)
-CYAN=(.03,.43,.52,1)
-TEXT=(.09,.20,.26,1)
-MUTED=(.29,.42,.46,1)
-PANEL=(.96,.985,.96,.95)
+ORANGE=(1,.55,.23,1)
+CYAN=(.47,.79,1,1)
+TEXT=(.92,.95,1,1)
+MUTED=(.62,.72,.84,1)
+PANEL=(.035,.055,.10,.89)
 
 
 def time_text(seconds):
@@ -27,7 +27,7 @@ def time_text(seconds):
 class Game(ShowBase):
     def __init__(self, smoke=False, screenshot=None, offscreen=False):
         loadPrcFileData('', '\n'.join([
-            'window-title SKETCH RACER / Seoul City Run', 'win-size 1440 900',
+            'window-title SKETCH RACER / Han River / Blue Turbo', 'win-size 1440 900',
             'sync-video true', 'framebuffer-multisample 1', 'multisamples 4',
             'show-frame-rate-meter false', 'textures-power-2 none',
             'audio-library-name p3openal_audio' if not smoke else 'audio-library-name null',
@@ -35,8 +35,8 @@ class Game(ShowBase):
             'window-type offscreen' if offscreen else 'window-type onscreen']))
         super().__init__()
         self.disableMouse()
-        self.setBackgroundColor(.54,.81,.97,1)
-        self.camLens.setNearFar(.15,1100)
+        self.setBackgroundColor(.16,.12,.24,1)
+        self.camLens.setNearFar(.15,1800)
         self.camLens.setFov(68)
         self.race=Race()
         self.keys={}
@@ -58,16 +58,16 @@ class Game(ShowBase):
         except (OSError, ValueError):
             pass
         ambient=AmbientLight('ambient')
-        ambient.setColor(Vec4(.80,.82,.78,1))
+        ambient.setColor(Vec4(.53,.58,.73,1))
         self.render.setLight(self.render.attachNewNode(ambient))
         sunlight=DirectionalLight('daylight-key')
-        sunlight.setColor(Vec4(.52,.49,.42,1))
+        sunlight.setColor(Vec4(.84,.55,.39,1))
         light=self.render.attachNewNode(sunlight)
         light.setHpr(-35,-48,0)
         self.render.setLight(light)
         fog=Fog('daylight-atmosphere')
-        fog.setColor(.54,.81,.97)
-        fog.setExpDensity(.0018)
+        fog.setColor(.25,.16,.26)
+        fog.setExpDensity(.0009)
         self.render.setFog(fog)
         # Use an installed Korean font when available; retain a portable English fallback.
         korean_font = None
@@ -79,7 +79,8 @@ class Game(ShowBase):
                 if korean_font is not None:
                     break
         build_world(self.render,self.race,korean_font)
-        self.car_nodes=[build_car(self.render,c.color) for c in self.race.cars]
+        self.car_nodes=[(build_player_car if i==0 else build_car)(self.render,c.color)
+                        for i,c in enumerate(self.race.cars)]
         self.audio=Audio(self.loader,ROOT/'.cache'/'audio')
         self._build_ui()
         # Keep Shift+W/A/D and Shift+arrows as independent held keys. Otherwise
@@ -112,7 +113,7 @@ class Game(ShowBase):
     def button(self,parent,text,x,z,command,width=.66,primary=False):
         return DirectButton(parent=parent,text=text,pos=(x,0,z),scale=1,
             frameSize=(-width/2,width/2,-.058,.058),
-            frameColor=ORANGE if primary else (.80,.92,.91,1),
+            frameColor=ORANGE if primary else (.13,.22,.34,1),
             text_fg=(.04,.06,.075,1) if primary else TEXT,
             text_scale=.035,text_pos=(0,-.012),relief=1,command=command,
             rolloverSound=None,clickSound=None)
@@ -123,7 +124,7 @@ class Game(ShowBase):
         self.hud=self.ui.attachNewNode('hud')
         self.panel(self.hud,(-1.64,1.64,.77,.94))
         self.label(self.hud,'SKETCH / RACER',-1.58,.835,.048)
-        self.label(self.hud,'SEOUL CITY RUN',-.92,.84,.025,CYAN)
+        self.label(self.hud,'HAN RIVER RUN',-.92,.84,.025,CYAN)
         self.lap_label=self.label(self.hud,'LAP  01 / 03',-.3,.83,.043)
         self.time_label=self.label(self.hud,'00:00.00',.24,.83,.043)
         self.button(self.hud,'PAUSE [P]',1.34,.85,self.toggle_pause,.48)
@@ -149,11 +150,11 @@ class Game(ShowBase):
         self.label(self.hud,'NITRO  /  SHIFT',1,-.61,.022,CYAN)
         self.nitro=DirectWaitBar(parent=self.hud,range=100,value=100,
             pos=(1.28,0,-.65),frameSize=(-.28,.28,-.017,.017),
-            frameColor=(.72,.83,.83,1),barColor=CYAN,relief=0)
+            frameColor=(.14,.2,.28,1),barColor=CYAN,relief=0)
         self.label(self.hud,'INTEGRITY',1,-.72,.022,MUTED)
         self.health=DirectWaitBar(parent=self.hud,range=100,value=100,
             pos=(1.28,0,-.76),frameSize=(-.28,.28,-.017,.017),
-            frameColor=(.72,.83,.83,1),barColor=ORANGE,relief=0)
+            frameColor=(.14,.2,.28,1),barColor=ORANGE,relief=0)
         self.score_label=self.label(self.hud,'SCORE  00000',-.88,-.79,.037)
         self.gate_label=self.label(self.hud,'NEXT CP  01 / 08',-.88,-.86,.025,CYAN)
         self.laptime_label=self.label(self.hud,'LAP --:--.--',.02,-.79,.027,MUTED)
@@ -167,20 +168,20 @@ class Game(ShowBase):
         self.wrong_way_banner.hide()
 
         self.menu=self.ui.attachNewNode('menu')
-        self.panel(self.menu,(-1.72,-.25,-.91,.94),(.96,.985,.96,.97))
+        self.panel(self.menu,(-1.72,-.25,-.91,.94),(.035,.055,.10,.95))
         self.label(self.menu,'S T U D I O   /   0 1',-1.58,.77,.03,CYAN)
         self.label(self.menu,'SKETCH',-1.59,.51,.18)
         self.label(self.menu,'RACER.',-1.59,.29,.18,ORANGE)
         self.label(self.menu,'YOUR DRAWING. FULL THROTTLE.',-1.57,.13,.032)
-        self.label(self.menu,'SEOUL CITY RUN  /  SUNNY DAY',-1.57,-.02,.027,CYAN)
+        self.label(self.menu,'HAN RIVER RUN  /  BLUE HOUR',-1.57,-.02,.027,CYAN)
         self.label(self.menu,'3 laps. 4 rivals. One finish line.\nHit every checkpoint in order.\nFind the boost pads. Own the corners.',-1.57,-.14,.034,MUTED)
         self.button(self.menu,'START RACE   /   ENTER',-.98,-.43,self.start,1.15,True)
         self.label(self.menu,'WASD / ARROWS   Drive & brake\nSHIFT   Nitro      SPACE   Drift\nP / ESC   Pause      R   Restart\nC   Camera      F   Reset      M   Audio',-1.57,-.60,.03,MUTED)
-        self.label(self.menu,'01  /  SKETCH-BUILT PICKUP',.05,-.76,.04)
-        self.label(self.menu,'A handwritten silhouette, reimagined in 3D.',.05,-.83,.028,MUTED)
+        self.label(self.menu,'01  /  BLUE TURBO COUPE',.05,-.76,.04)
+        self.label(self.menu,'Round headlights. Wide hips. Iconic whale tail.',.05,-.83,.028,MUTED)
 
         self.overlay=self.ui.attachNewNode('pause-results')
-        self.panel(self.overlay,(-1.05,1.05,-.69,.69),(.96,.985,.96,.98))
+        self.panel(self.overlay,(-1.05,1.05,-.69,.69),(.035,.055,.10,.98))
         self.overlay_title=self.label(self.overlay,'PAUSED',0,.43,.105,TEXT,TextNode.ACenter)
         self.overlay_sub=self.label(self.overlay,'',0,.28,.031,CYAN,TextNode.ACenter)
         self.overlay_body=self.label(self.overlay,'',0,.02,.043,TEXT,TextNode.ACenter)
@@ -235,8 +236,8 @@ class Game(ShowBase):
     def driving_camera_pose(self):
         c=self.race.player
         fx,fy=math.cos(c.heading),math.sin(c.heading)
-        back,height=[(11.5,5.8),(6.1,3.2),(20,16)][self.camera_mode]
-        back+=c.speed*.06
+        back,height=[(8.5,4.8),(6.1,3.2),(20,16)][self.camera_mode]
+        back+=c.speed*.035
         return (Vec3(c.x-fx*back,c.y-fy*back,height),
                 Vec3(c.x+fx*(5+c.speed*.1),c.y+fy*(5+c.speed*.1),1.1))
 
