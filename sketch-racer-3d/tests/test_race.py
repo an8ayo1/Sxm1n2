@@ -179,6 +179,62 @@ class RaceTests(unittest.TestCase):
             positions.append(c.y)
         self.assertAlmostEqual(positions[0],-positions[1])
 
+    def test_slow_pad_reduces_speed_without_damage_or_repeated_hits(self):
+        r=self.race()
+        for c in (r.player,r.cars[1]):
+            x,y,h,s=r.slow_pads[0]
+            c.x,c.y,c.heading,c.track_s=x,y,h,s
+            c.vx,c.vy=30*math.cos(h),30*math.sin(h)
+            c.pad_boost=1
+            health=c.health
+            r._drive(c,Control(throttle=1,boost=True),DT)
+            self.assertLess(c.speed,19)
+            self.assertEqual(c.health,health)
+            self.assertEqual(c.pad_slow,1.8)
+            self.assertFalse(c.boosted)
+            self.assertEqual(c.pad_boost,0)
+            speed=c.speed
+            energy=c.energy
+            r._drive(c,Control(throttle=1,boost=True,steer=1),DT)
+            self.assertGreater(c.speed,speed*.9)  # No repeated 40% multiplication.
+            self.assertGreaterEqual(c.energy,energy)  # No wasted nitro while slowed.
+            self.assertGreater(c.steer,0)
+        self.assertEqual(r.events.count('SLOW PAD  /  GRIP ZONE'),1)
+
+    def test_slow_pad_bounds_expiry_and_respawn(self):
+        r=self.race()
+        c=r.player
+        x,y,h,s=r.slow_pads[0]
+        c.x=x-math.sin(h)*2.8
+        c.y=y+math.cos(h)*2.8
+        c.heading=h
+        r._drive(c,Control(),DT)
+        self.assertEqual(c.pad_slow,0)  # Missing the visible pad must not slow a car.
+        c.pad_slow=.01
+        c.x,c.y,c.heading=r.track.at(10)
+        for _ in range(3):
+            r._drive(c,Control(throttle=1,boost=True),DT)
+        self.assertEqual(c.pad_slow,0)
+        self.assertTrue(c.boosted)
+        c.pad_slow=1.8
+        r.recover()
+        self.assertEqual(c.pad_slow,0)
+        r.reset()
+        self.assertEqual(r.player.slow_pad_cooldown,0)
+
+    def test_accelerating_and_boosting_can_turn_both_directions(self):
+        for steer in (-1,1):
+            r=self.race()
+            r.track.width=200  # Isolate input response from barriers and scenery.
+            r.obstacles=[]
+            c=r.player
+            original=c.heading
+            c.vx,c.vy=35*math.cos(original),35*math.sin(original)
+            for _ in range(40):
+                r._drive(c,Control(throttle=1,boost=True,steer=steer),DT)
+            self.assertGreater((c.heading-original)*steer,.1)
+            self.assertGreater(c.speed,25)
+
     def test_complete_three_laps_with_real_controls(self):
         r=self.race()
         # Uses the same steering/throttle physics as keyboard input; no teleporting.

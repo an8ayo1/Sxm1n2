@@ -182,6 +182,17 @@ def build_world(parent, race, korean_font=None):
         for v in (-1.6,0,1.6):
             arrow=lines(pad,[(-1.8,v-.5,.08),(0,v+.45,.08),(1.8,v-.5,.08)],(.24,1,1,1),5)
             arrow.setLightOff()
+    # Warm hazard stripes and SLOW distinguish these from cyan acceleration pads.
+    for x,y,h,s in race.slow_pads:
+        pad=world.attachNewNode('slow-pad')
+        pad.setPos(x,y,.07)
+        pad.setH(math.degrees(h)-90)
+        box(pad,(0,0,0),(4.8,5.5,.08),(.95,.48,.08,1))
+        for v in (-2.1,-1.5,1.5,2.1):
+            stripe=box(pad,(0,v,.055),(4.5,.22,.025),(.22,.15,.10,1))
+            stripe.setLightOff()
+        label=text3d(pad,'SLOW',(0,-.4,.1),.85,(.14,.10,.07,1))
+        label.setP(-90)
     for x,y,r,kind,s,lane in race.obstacles:
         if kind=='crate':
             obj=box(world,(x,y,1.25),(r*1.7,r*1.7,2.5),(.42,.27,.15,1))

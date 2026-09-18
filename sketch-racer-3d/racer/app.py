@@ -3,7 +3,7 @@ import math
 from pathlib import Path
 
 from panda3d.core import (loadPrcFileData, Vec3, Vec4, AmbientLight,
-    DirectionalLight, Fog, TextNode, WindowProperties, ClockObject)
+    DirectionalLight, Fog, TextNode, WindowProperties, ClockObject, ModifierButtons)
 from direct.showbase.ShowBase import ShowBase
 from direct.gui.DirectGui import DirectFrame, DirectButton, DirectWaitBar
 from direct.gui.OnscreenText import OnscreenText
@@ -82,6 +82,12 @@ class Game(ShowBase):
         self.car_nodes=[build_car(self.render,c.color) for c in self.race.cars]
         self.audio=Audio(self.loader,ROOT/'.cache'/'audio')
         self._build_ui()
+        # Keep Shift+W/A/D and Shift+arrows as independent held keys. Otherwise
+        # Panda prefixes events (e.g. "shift-a") and the steering binding misses them.
+        if self.mouseWatcherNode:
+            self.mouseWatcherNode.setModifierButtons(ModifierButtons())
+        for thrower in self.buttonThrowers or []:
+            thrower.node().setModifierButtons(ModifierButtons())
         for key in ['w','a','s','d','arrow_up','arrow_down','arrow_left','arrow_right','space','shift']:
             self.accept(key,self._key,[key,True])
             self.accept(key+'-up',self._key,[key,False])

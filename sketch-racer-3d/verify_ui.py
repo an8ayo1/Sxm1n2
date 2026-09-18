@@ -31,6 +31,25 @@ def main():
         lo,hi=left.getTightBounds(root)
         rlo,rhi=right.getTightBounds(root)
         assert abs(lo.x+rhi.x)<1e-5 and abs(hi.x+rlo.x)<1e-5
+    # These engine settings prevent Shift from renaming steering key events.
+    assert game.mouseWatcherNode.getModifierButtons().getNumButtons()==0
+    assert all(t.node().getModifierButtons().getNumButtons()==0 for t in game.buttonThrowers)
+    for forward,left,right in [('w','a','d'),('arrow_up','arrow_left','arrow_right')]:
+        for order in [('shift',forward,left),(forward,left,'shift')]:
+            game.keys.clear()
+            for key in order:
+                game.messenger.send(key)
+            u=game.controls()
+            assert u.throttle==1 and u.steer==1 and u.boost
+            game.messenger.send(left+'-up')
+            game.messenger.send(right)
+            assert game.controls().steer==-1 and game.controls().throttle==1
+            game.messenger.send('shift-up')
+            assert not game.controls().boost and game.controls().steer==-1
+            game.messenger.send(right+'-up')
+            game.messenger.send(forward+'-up')
+            assert game.controls().throttle==0 and game.controls().steer==0
+    game.keys.clear()
     tick(50)
     assert not game.menu.isHidden()
     game.win.saveScreenshot(str((output/'start.png').resolve()))

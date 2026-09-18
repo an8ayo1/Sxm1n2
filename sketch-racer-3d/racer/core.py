@@ -34,7 +34,7 @@ class Control:
 
 
 class Track:
-    width = 23.0
+    width = 32.0
 
     def __init__(self):
         self.points = []
@@ -98,6 +98,8 @@ class Car:
     hit_cooldown: float = 0
     boost_pad_cooldown: float = 0
     pad_boost: float = 0
+    pad_slow: float = 0
+    slow_pad_cooldown: float = 0
     boosted: bool = False
     finished: bool = False
     finish_time: float = 0
@@ -133,6 +135,8 @@ class Race:
             self.obstacles.append((x, y, radius, kind, s, lane))
         for s, lane in [(112, 0), (290, -2), (465, 1)]:
             self.pads.append((*self.track.at(s, lane), s))
+        self.slow_pads = [(*self.track.at(s, lane), s)
+                          for s, lane in [(55, -5), (220, 4), (395, -3.5)]]
         self.reset('menu')
 
     @property
@@ -170,7 +174,8 @@ class Race:
         c.track_s = self.track.project(c.x, c.y)[0]
         c.x, c.y, c.heading = self.track.at(c.track_s)
         c.vx = c.vy = 0
-        c.steer = c.wrong_way_time = c.pad_boost = 0
+        c.steer = c.wrong_way_time = c.pad_boost = c.pad_slow = 0
+        c.slow_pad_cooldown = 0
         c.boosted = False
         c.hit_cooldown = .4  # Brief contact grace without triggering impact camera shake.
         c.score = max(0, c.score-100)
@@ -240,12 +245,14 @@ class Race:
         c.hit_cooldown = max(0, c.hit_cooldown-dt)
         c.boost_pad_cooldown = max(0, c.boost_pad_cooldown-dt)
         c.pad_boost = max(0, c.pad_boost-dt)
+        c.pad_slow = max(0, c.pad_slow-dt)
+        c.slow_pad_cooldown = max(0, c.slow_pad_cooldown-dt)
         c.steer += (clamp(u.steer, -1, 1)-c.steer)*min(1, dt*9)
         forward_x, forward_y = math.cos(c.heading), math.sin(c.heading)
         longitudinal = c.vx*forward_x+c.vy*forward_y
         lateral = -c.vx*forward_y+c.vy*forward_x
-        c.boosted = (u.boost and c.energy > 0 and u.throttle > 0) or c.pad_boost > 0
-        if u.boost and c.energy > 0 and u.throttle > 0:
+        c.boosted = c.pad_slow <= 0 and ((u.boost and c.energy > 0 and u.throttle > 0) or c.pad_boost > 0)
+        if c.boosted and u.boost and c.energy > 0 and u.throttle > 0:
             c.energy = max(0, c.energy-25*dt)
         else:
             c.energy = min(100, c.energy+9*dt)
@@ -253,6 +260,9 @@ class Race:
         drag = .28*longitudinal+.006*longitudinal*abs(longitudinal)
         brake = clamp(u.brake, 0, 1)*32
         longitudinal = max(0, longitudinal+(engine-drag-brake)*dt)
+        if c.pad_slow > 0:
+            # Extra road resistance is time-based and leaves steering/braking available.
+            longitudinal *= math.exp(-1.2*dt)
         longitudinal = min(61 if c.boosted else 46, longitudinal)
         lateral *= math.exp(-(2.1 if u.drift else 8)*dt)
         yaw = longitudinal/3.3*math.tan(c.steer*.42)/(1+longitudinal*.065)
@@ -292,6 +302,19 @@ class Race:
                 c.score += 150
                 if c is self.player:
                     self.events.append('BOOST PAD  +150')
+        for x, y, h, _ in self.slow_pads:
+            dx, dy = c.x-x, c.y-y
+            along = dx*math.cos(h)+dy*math.sin(h)
+            across = -dx*math.sin(h)+dy*math.cos(h)
+            # Match the visible rectangle and trigger once, not once per physics tick.
+            if abs(along) <= 2.75 and abs(across) <= 2.4 and c.slow_pad_cooldown <= 0:
+                c.pad_slow, c.slow_pad_cooldown = 1.8, 3.0
+                c.vx *= .6
+                c.vy *= .6
+                c.pad_boost = 0
+                c.boosted = False
+                if c is self.player:
+                    self.events.append('SLOW PAD  /  GRIP ZONE')
         ds = (s-c.track_s+self.track.length/2) % self.track.length-self.track.length/2
         # Only physically plausible, on-road forward crossings can earn gates.
         if abs(ds) < max(2, c.speed*dt*3):
